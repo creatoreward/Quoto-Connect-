@@ -1,0 +1,185 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // --- Helper Functions ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || isAdmin());
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'developpeurhacker01@gmail.com' || 
+        request.auth.token.email == 'ngoyelie866@gmail.com'
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['user', 'admin'] &&
+             data.balance is number &&
+             data.coins is number &&
+             (!('status' in data) || data.status in ['active', 'alerted', 'suspended']) &&
+             (!('contentViewsTotal' in data) || data.contentViewsTotal is number);
+    }
+
+    function isValidQuote(data) {
+      return data.text is string && data.text.size() <= 1000 &&
+             data.author is string &&
+             data.creatorId == request.auth.uid &&
+             data.createdAt == request.time &&
+             (!('category' in data) || data.category is string) &&
+             (!('tags' in data) || data.tags is list);
+    }
+
+    function isValidDevTask(data) {
+      return data.title is string && data.title.size() <= 100 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.priority in ['low', 'medium', 'high', 'urgent'] &&
+             data.status in ['todo', 'in_progress', 'completed'] &&
+             data.adminId == request.auth.uid;
+    }
+
+    // --- Collection Matches ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn(); // Allow getting any profile (public info)
+      allow list: if isSignedIn(); // Allow searching/listing (needed for social)
+      
+      allow create: if isOwner(userId) && 
+                      incoming().keys().hasAll(['uid', 'email', 'role', 'balance', 'coins']) &&
+                      isValidUser(incoming()) &&
+                      (incoming().role == 'user' || isAdmin()) && 
+                      incoming().balance == 0;
+
+      allow update: if isAdmin() || (
+                        isSignedIn() && (
+                          // Case 1: The owner updates their own profile or ad revenue
+                          (isOwner(userId) && 
+                           isValidUser(incoming()) &&
+                           incoming().role == existing().role &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'coverURL', 'bio', 'phoneNumber', 'region', 'country', 'province', 'cityCurrent', 'cityOrigin', 'birthDate', 'gender', 'profession', 'withdrawalMethod', 'lastLogin', 'isVerified', 'followersCount', 'followingCount', 'quotoPoints', 'videosWatchedTotal', 'adRevenueRewarded', 'balance', 'totalAdRevenueGenerated', 'adRevenueCreator', 'contentViewsTotal'])
+                          ) ||
+                          // Case 2: A viewer updates the creator's revenue (ad sync)
+                          (incoming().diff(existing()).affectedKeys().hasOnly(['adRevenueCreator', 'balance', 'totalAdRevenueGenerated', 'contentViewsTotal']))
+                        )
+                      );
+    }
+
+    function isValidReel(data) {
+      return data.userId == request.auth.uid &&
+             data.userName is string &&
+             data.description is string &&
+             data.videoURL is string &&
+             data.likesCount is number &&
+             data.viewsCount is number &&
+             data.createdAt == request.time;
+    }
+
+    match /reels/{reelId} {
+      allow read: if true;
+      allow create: if isEmailVerified() && isValidId(reelId) && isValidReel(incoming());
+      allow update: if isAdmin() || 
+                      (isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId) ||
+                      (incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount', 'likesCount']));
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(existing().userId));
+    }
+
+    match /quotes/{quoteId} {
+      allow read: if true; // Allow guests to see inspiration
+      allow create: if isEmailVerified() && isValidId(quoteId) && isValidQuote(incoming());
+      allow update: if isAdmin() || 
+                      (isSignedIn() && isOwner(existing().creatorId) && incoming().creatorId == existing().creatorId) ||
+                      (incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount']));
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(existing().creatorId));
+    }
+
+    match /posts/{postId} {
+      allow read: if true; // Public social flow
+      allow create: if isEmailVerified() && isValidId(postId) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow update: if isAdmin() || 
+                      (isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId) ||
+                      (incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount']));
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(existing().userId));
+    }
+
+    match /dev_tasks/{taskId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(taskId) && isValidDevTask(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /app_config/{configId} {
+      allow read: if true; // Must be public for maintenance check
+      allow write: if isAdmin();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn(); 
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /challenges/{challengeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /userChallenges/{progressId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isSignedIn() && (incoming().userId == request.auth.uid || isAdmin());
+    }
+
+    match /friendships/{friendshipId} {
+      allow read: if isSignedIn(); // Allow reading friendships to show counts (visibility depends on query)
+      allow write: if isSignedIn() && request.auth.uid in incoming().uids;
+    }
+
+    match /friendRequests/{requestId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.fromId || request.auth.uid == resource.data.toId);
+      allow create: if isSignedIn() && request.auth.uid == incoming().fromId;
+      allow update: if isSignedIn() && (request.auth.uid == resource.data.toId || isAdmin());
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.fromId || request.auth.uid == resource.data.toId || isAdmin());
+    }
+
+    match /transactions/{txId} {
+      allow read: if isAdmin() || (isSignedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

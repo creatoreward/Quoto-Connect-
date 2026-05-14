@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "User": {
+      "title": "Utilisateur",
+      "description": "Profil utilisateur avec statistiques de monétisation et préférences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "balance": { "type": "number" },
+        "coins": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "alerted", "suspended"] },
+        "isPaymentSuspended": { "type": "boolean" },
+        "adRevenueGenerated": { "type": "number" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Quote": {
+      "title": "Citation",
+      "description": "Citations générées par IA.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "author": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "DeveloperTask": {
+      "title": "Tâche Développeur",
+      "description": "Instructions envoyées à l'IA par l'administrateur.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "status": { "type": "string", "enum": ["todo", "in_progress", "completed"] }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Données de profil utilisateur."
+    },
+    "/quotes/{quoteId}": {
+      "schema": "Quote",
+      "description": "Citations publiques."
+    },
+    "/dev_tasks/{taskId}": {
+      "schema": "DeveloperTask",
+      "description": "Tâches pour l'amélioration de l'app."
+    },
+    "/app_config/main_config": {
+      "schema": { "$ref": "#/entities/RemoteConfig" },
+      "description": "Configuration globale de l'application."
+    }
+  }
+}
